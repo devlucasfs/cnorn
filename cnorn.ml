@@ -52,7 +52,31 @@ let detect_mode lines =
   in
   go [] lines
 
-let tag = "@import(\""
+let tag = "@import("
+
+let parse_args line from =
+  let n = String.length line in
+  let skip_ws i =
+    let i = ref i in
+    while !i < n && (line.[!i] = ' ' || line.[!i] = '\t') do incr i done;
+    !i
+  in
+  let rec parse_str i acc =
+    let i = skip_ws i in
+    if i >= n || line.[i] <> '"' then None
+    else
+      match String.index_from_opt line (i + 1) '"' with
+      | None -> None
+      | Some j ->
+        let acc = String.sub line (i + 1) (j - i - 1) :: acc in
+        let i = skip_ws (j + 1) in
+        if i >= n then None
+        else if line.[i] = ',' then parse_str (i + 1) acc
+        else if line.[i] = '"' then parse_str i acc
+        else if line.[i] = ')' then Some (List.rev acc, i + 1)
+        else None
+  in
+  parse_str from []
 
 let rec expand_file stack path =
   let full = normalize path in
@@ -63,7 +87,7 @@ let rec expand_file stack path =
   | _ ->
     if mode = Once then seen := SS.add full !seen;
     if List.mem full stack then
-      die "circular import in an pragma always file': %s" full;
+      die "circular import in a pragma always file: %s" full;
     let dir = Filename.dirname full in
     let stack = full :: stack in
     String.concat "\n" (List.map (expand_line stack dir) lines)
@@ -75,13 +99,15 @@ and expand_line stack dir line =
     match find_sub line tag pos with
     | None -> Buffer.add_substring buf line pos (n - pos)
     | Some start ->
-      let name_start = start + String.length tag in
-      (match find_sub line "\")" name_start with
-       | None -> Buffer.add_substring buf line pos (n - pos)
-       | Some closing ->
+      let args_start = start + String.length tag in
+      (match parse_args line args_start with
+       | None ->
+         Buffer.add_substring buf line pos (args_start - pos);
+         loop args_start
+       | Some (parts, after) ->
          Buffer.add_substring buf line pos (start - pos);
-         let rel = String.sub line name_start (closing - name_start) in
-         let e = ref (closing + 2) in
+         let rel = String.concat "/" parts in
+         let e = ref after in
          let k = ref !e in
          while !k < n && (line.[!k] = ' ' || line.[!k] = '\t') do incr k done;
          if !k < n && line.[!k] = ';' then e := !k + 1;
@@ -104,5 +130,5 @@ let () =
     output_string oc out;
     close_out oc
   | _ ->
-    prerr_endline "uso: cnorn input.c [output.c]";
+    prerr_endline "use: cnorn input.c [output.c]";
     exit 1
