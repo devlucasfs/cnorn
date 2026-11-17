@@ -72,11 +72,36 @@ let parse_args line from =
         let i = skip_ws (j + 1) in
         if i >= n then None
         else if line.[i] = ',' then parse_str (i + 1) acc
-        else if line.[i] = '"' then parse_str i acc
+        else if line.[i] = '"' then parse_str i acc  (* vírgula opcional *)
         else if line.[i] = ')' then Some (List.rev acc, i + 1)
         else None
   in
   parse_str from []
+
+let cpragma = "@cpragma"
+
+let translate_cpragma line =
+  let n = String.length line in
+  let m = String.length cpragma in
+  let i = ref 0 in
+  while !i < n && (line.[!i] = ' ' || line.[!i] = '\t') do incr i done;
+  let i = !i in
+  if i + m <= n
+     && String.sub line i m = cpragma
+     && (i + m = n
+         || line.[i + m] = ' ' || line.[i + m] = '\t' || line.[i + m] = '\r')
+  then begin
+    let rest = String.sub line (i + m) (n - i - m) in
+    let out = String.sub line 0 i ^ "#pragma" ^ rest in
+    if String.trim rest = "once" then out ^ "\n" else out
+  end
+  else line
+
+let pragma_once_nl = "#pragma once\n"
+
+let has_suffix s suf =
+  let n = String.length s and m = String.length suf in
+  n >= m && String.sub s (n - m) m = suf
 
 let rec expand_file stack path =
   let full = normalize path in
@@ -93,6 +118,7 @@ let rec expand_file stack path =
     String.concat "\n" (List.map (expand_line stack dir) lines)
 
 and expand_line stack dir line =
+  let line = translate_cpragma line in
   let n = String.length line in
   let buf = Buffer.create n in
   let rec loop pos =
@@ -115,7 +141,11 @@ and expand_line stack dir line =
            if Filename.is_relative rel then Filename.concat dir rel else rel
          in
          let body = expand_file stack target in
-         Buffer.add_string buf (strip_final_newline body);
+         let body =
+           if has_suffix body pragma_once_nl then body
+           else strip_final_newline body
+         in
+         Buffer.add_string buf body;
          loop !e)
   in
   loop 0;
@@ -130,5 +160,5 @@ let () =
     output_string oc out;
     close_out oc
   | _ ->
-    prerr_endline "use: cnorn input.c [output.c]";
+    prerr_endline "uso: cnorn input.c [output.c]";
     exit 1
